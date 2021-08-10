@@ -1,6 +1,6 @@
 # data_structs.py
 import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
 
 from collections import namedtuple
@@ -8,7 +8,8 @@ from collections import namedtuple
 @dataclass
 class UniqueTopic:
     id: int
-    alt_names: List[str]
+    base_name: str
+    display_name: str
     dirty: bool = False
 
 
@@ -17,7 +18,7 @@ class Topic:
     id: int
     name: str
     volume: int
-    tweets: List[str]
+    tweets: List[str] = field(default=lambda: [])
 
 
 @dataclass

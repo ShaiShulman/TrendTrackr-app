@@ -1,8 +1,7 @@
 # master_list.py
 """ Master list of unique topics and their alternate spellings and IDs """
 
-import uuid
-from db import mongo_client
+from common.data_structs import UniqueTopic
 
 
 def _get_base_name(name):
@@ -10,27 +9,41 @@ def _get_base_name(name):
     return source_name.lower()
 
 
-class MasterList():
-    def __init__(self, existing_mongo=None):
+class MasterList:
+    def __init__(self, storage):
+        self._storage = storage
+        self._list = []
+
+    def get_id(self, name):
+        try:
+            result = next(filter(lambda x:x.base_name == _get_base_name(name), self._list)).id
+        except StopIteration:
+            result = self._storage.find_topic_id(_get_base_name(name))
+            if result:
+                self._list.append(UniqueTopic(
+                    result,
+                    _get_base_name(name),
+                    name
+                ))
+                return result
+            else:
+                return self.add_topic(_get_base_name(name))
+        else:
+            return result
+
+    def add_topic(self, name):
+        result = self._storage.save_topic_to_master_list(_get_base_name(name), name)
+        self._list.append(UniqueTopic(
+            result,
+            _get_base_name(name),
+            name
+        ))
+        return result
+
+
+'''
         if existing_mongo:
             self._db = existing_mongo.TrendTracker.master_list
         else:
             self._db = mongo_client().TrendTracker.master_list
-
-    def get_topic_id(self, name):
-        results = self._db.find_one(
-            {'base_name': _get_base_name(name)},
-            {'id': 1})
-        if results:
-            return results['id']
-        else:
-            return self._add_topic(name)
-
-    def _add_topic(self, name):
-        new_id = uuid.uuid4().hex
-        self._db.insert_one({
-            'id': new_id,
-            'base_name': _get_base_name(name),
-            'display_name': name})
-        return new_id
-
+'''
