@@ -43,7 +43,7 @@ class Storage:
             topic in trends]}
         self._db.topics.insert_one(data)
 
-    def load_topics(self, date=None, topic_id=None, topic_base_name=None, include_tweets=False):
+    def load_daily_topics(self, date=None, topic_id=None, topic_base_name=None, include_tweets=False):
         query = {}
         if isinstance(date, datetime):
             query['date'] = {'$lt': datetime(date.year, date.month, date.day, 23, 59, 59),
@@ -64,6 +64,39 @@ class Storage:
                                         for topic in document['topics']])
             data.append(daily)
         return data
+
+    def load_topic_history(self, topic_id=None, topic_base_name=None, include_name=False):
+        query = [{'$unwind': '$topics'}]
+        if topic_id and not topic_base_name:
+            query.append({'$match': {'topics.id': topic_id}})
+        elif topic_base_name and not topic_id:
+            query.append({'$match': {'topics.name': topic_base_name}})
+        else:
+            raise ValueError('either topic id or name must be provided')
+        if include_name:
+            query.extend([
+                {'$lookup': {'from': 'master_list', 'localField': 'topics.id', 'foreignField': 'id',
+                             'as': 'master'}},
+                {'$unwind': '$master'},
+                {'$project': {'id': '$topics.id', 'date': 1, 'volume': '$topics.volume',
+                              'name': '$master.display_name'}}
+            ])
+        else:
+            query.extend([
+                {'$unwind': '$topics'},
+                {'$project': {'id': '$topics.id', 'date': 1, 'volume': '$topics.volume'}}
+            ])
+        query.append({'$sort': {'date': 1}})
+        raw_data = list(self._db.topics.aggregate(query))
+        data = [{'date': daily['date'].date(),
+                 'volume': daily['volume']} for daily in raw_data]
+        if len(data) > 0:
+            if include_name:
+                return data, data[0]['name']
+            else:
+                return data
+        else:
+            return None
 
 
 '''

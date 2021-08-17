@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO,
                         logging.StreamHandler(sys.stdout)
                     ], format='%(asctime)s - %(message)s')
 
-LOCATION_ID = 23424852
+LOCATION_ID = 1968212
 
 
 if __name__ == '__main__':
