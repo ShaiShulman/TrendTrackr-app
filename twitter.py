@@ -20,7 +20,8 @@ def get_api(keys):
 
 def get_trends(location_id, keys):
     raw = get_api(keys).trends_place(location_id)
-    trends = [Topic(id=None, name=trend['name'], volume=trend['tweet_volume']) for trend in raw[0]['trends'] if trend['tweet_volume']]
+    trends = [Topic(id=None, name=trend['name'], volume=trend['tweet_volume']) for trend in raw[0]['trends'] if
+              trend['tweet_volume']]
     return trends
 
 
@@ -32,3 +33,8 @@ def get_stream(topics, keys, logger=None):
     stream = tweepy.Stream(auth=api.auth, listener=listener)
     stream.filter(track=topics, languages=['en'], is_async=False)
     return tweets
+
+
+def available_locations(keys, lat, long):
+    api = get_api(keys)
+    return [(i['woeid'], i['name']) for i in api.trends_closest(lat, long)]
