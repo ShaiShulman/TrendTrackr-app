@@ -8,6 +8,14 @@ import tweepy
 
 class TweetListener(tweepy.StreamListener):
     def __init__(self, api, topics, tweet_list, limit=5, logger=None):
+        """
+        Constructor for TweetListener
+        @param api: Tweepy api object
+        @param topics: list of topics to listen to
+        @param tweet_list: list of tweets to be populated by the Listener
+        @param limit: max number of tweets to read for each topic
+        @param logger: logger object
+        """
         self.tweet_count = {i.lower(): 0 for i in topics}
         self.tweet_list = tweet_list
         self.topics = [topic.lower() for topic in topics]
@@ -17,10 +25,16 @@ class TweetListener(tweepy.StreamListener):
         super().__init__(api)
 
     def on_connect(self):
+        """
+        Connection event
+        """
         if self.logger:
             logging.info('TweetListener connected')
 
     def on_status(self, status):
+        """
+        Event to be triggered on new tweet. Will extract and store the tweet text.
+        """
         if hasattr(status, "retweeted_status"):
             try:
                 tweet_text = status.retweeted_status.extended_tweet["full_text"]

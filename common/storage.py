@@ -3,11 +3,10 @@
 Provides interface with MongoDB for storing and retreiving master list of topics and daily ropics
 """
 import uuid
-from dateutil import parser
 from datetime import datetime
 from pymongo import MongoClient
 from common.data_structs import Topic, DailyTopics, DailyVolume, TopicSummary
-from common.master_list import MasterList
+from common.keys import Keys
 
 
 def _get_db(conn_str):
@@ -21,14 +20,22 @@ def _get_db(conn_str):
     return db
 
 
+_QUERY_ADD_TOPIC_RANK = [{'$unwind': '$topics'}, {'$sort': {'topics.volume': -1}},
+                         {'$group': {'_id': '$date', 'items': {'$push': '$$ROOT.topics'}, 'totalVolume': {'$sum': '$topics.volume'}}},
+                         {'$unwind': {'path': '$items', 'includeArrayIndex': 'items.rank'}},
+                         {'$set': {'items.volumePct': {'$divide': ['$items.volume', '$totalVolume']}}},
+                         {'$group': {'_id': '$_id', 'topics': {'$push': '$$ROOT.items'}}},
+                         {'$project': {'date': '$_id', '_id': 0, 'topics': 1}}]
+
+
 class Storage:
 
-    def __init__(self, mongo_connection_str):
+    def __init__(self, mongo_connection_str=None):
         """
         Constructor for storage object
-        @param mongo_connection_str: full MongoDB connection string
+        @param mongo_connection_str: optional. full MongoDB connection string. If empty will read from the Keys class.
         """
-        self._db = _get_db(mongo_connection_str).TrendTracker
+        self._db = _get_db(mongo_connection_str if mongo_connection_str else Keys().mongo_db_connection).TrendTracker
 
     def find_topic_id(self, base_name):
         """
@@ -78,22 +85,27 @@ class Storage:
         @param include_tweets: shoudl sample sweets be included in the result.
         @return: list of daily topic objects based on query. will return all dates if no query is provided.
         """
-        query = {}
+        query = _QUERY_ADD_TOPIC_RANK
+        match = []
         if isinstance(date, datetime):
-            query['date'] = {'$lt': datetime(date.year, date.month, date.day, 23, 59, 59),
+            match['date'] = {'$lt': datetime(date.year, date.month, date.day, 23, 59, 59),
                              '$gte': datetime(date.year, date.month, date.day, 0, 0, 0)}
         if topic_id:
-            query['topics.id'] = topic_id
+            match['topics.id'] = topic_id
         if topic_base_name:
-            query['topics.name'] = topic_base_name
+            match['topics.name'] = topic_base_name
             cursor = self._db.topics.find({'topics.id': topic_id})
-        cursor = self._db.topics.find(query)
+        if len(match):
+            query.append({'$match': match})
+        cursor = self._db.topics.aggregate(query)
         data = []
         for document in cursor:
-            daily = DailyTopics(time=str((document['date'])),
+            daily = DailyTopics(time=str((document['date'].date())),
                                 topics=[Topic(name=topic['name'],
                                               volume=topic['volume'],
                                               id=topic['id'],
+                                              rank=topic['rank'] + 1,
+                                              pct_volume=topic['volumePct'],
                                               tweets=topic.get('tweets', []) if include_tweets else [])
                                         for topic in document['topics']])
             data.append(daily)
@@ -119,17 +131,18 @@ class Storage:
                 {'$lookup': {'from': 'master_list', 'localField': 'topics.id', 'foreignField': 'id',
                              'as': 'master'}},
                 {'$unwind': '$master'},
-                {'$project': {'id': '$topics.id', 'date': 1, 'volume': '$topics.volume',
-                              'name': '$master.display_name'}}
+                {'$project': {'id': '$topics.id', 'date': 1, 'volume': '$topics.volume',  'rank': '$topics.rank',
+                              'volumePct': '$topics.volumePct', 'name': '$master.display_name'}}
             ])
         else:
             query.extend([
                 {'$unwind': '$topics'},
-                {'$project': {'id': '$topics.id', 'date': 1, 'volume': '$topics.volume'}}
+                {'$project': {'id': '$topics.id', 'date': 1, 'volume': '$topics.volume', 'rank': '$topics.rank',
+                              'volumePct': '$topics.volumePct'}}
             ])
         query.append({'$sort': {'date': 1}})
         raw_data = list(self._db.topics.aggregate(query))
-        data = [DailyVolume(daily['date'].date(), daily['volume']) for daily in raw_data]
+        data = [DailyVolume(daily['date'].date(), daily['volume'], daily['rank'], daily['volumePct']) for daily in raw_data]
         if len(data) > 0:
             if include_name:
                 return data, data[0]['name']
@@ -168,3 +181,5 @@ class Storage:
                              first_date=document['first_date'],
                              last_date=document['last_date']) for document in raw_data]
         return data
+
+
