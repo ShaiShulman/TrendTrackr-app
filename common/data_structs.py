@@ -1,5 +1,5 @@
 # data_structs.py
-""" Data structures used in the app"""
+""" Data structures used in the model"""
 import datetime
 from dataclasses import dataclass, field
 from typing import List
@@ -24,14 +24,28 @@ class Topic:
     id: int
     name: str
     volume: int
-    rank: int
-    pct_volume: float
-    tweets: List[str] = field(default=lambda: [])
+    tweets: List[str]  # = field(default=lambda: [])
 
     def __str__(self):
-        return (f'{self.name:30}\t{self.volume:>10,}\t{self.rank:<2} rank\t({self.pct_volume:.2%})\t(id={self.id})' + '\n' * (len(self.tweets) > 0) +
+        return (f'{self.name:30}\t{self.volume:>10,}\t(id={self.id})' + '\n' * (len(self.tweets) > 0) +
                 '\n'.join(['\t\t* ' + tweet[:75].strip().replace("\n", " ") + '...' * (len(tweet) > 75) for tweet in
                            self.tweets]))
+
+
+@dataclass
+class TopicStat(Topic):
+    """
+    Topic for a specific date with statistical analysis
+    """
+    rank: int
+    pct_volume: float
+
+    def __str__(self):
+        return (
+                    f'{self.name:30}\t{self.volume:>10,}\t{self.rank:>4} rank\t({self.pct_volume:.2%})\t(id={self.id})' + '\n' * (
+                        len(self.tweets) > 0) +
+                    '\n'.join(['\t\t* ' + tweet[:75].strip().replace("\n", " ") + '...' * (len(tweet) > 75) for tweet in
+                               self.tweets]))
 
 
 @dataclass
@@ -60,7 +74,7 @@ class DailyVolume:
     pct_volume: float
 
     def __str__(self):
-        return f'{self.time}\t{self.volume:>10,} tweets ({self.pct_volume:.2f%})\t{self.rank:>2} rank\t'
+        return f'{self.time}\t{self.volume:>10,} tweets ({self.pct_volume:.2%})\t{self.rank:>2} rank\t'
 
 
 @dataclass
@@ -76,4 +90,8 @@ class TopicSummary:
     last_date: datetime.date
 
     def __str__(self):
-        return f'{self.name[:15]}\t{self.total_volume:>10,} tweets\t{self.total_days:>3} days\t{self.first_date.strftime("%d/%m/%Y")}>{self.last_date.strftime("%d/%m/%Y")}'
+        return f'{self.name:<25}\t{self.total_volume:>10,} tweets\t{self.total_days:>3} days\t{self.first_date.strftime("%d/%m/%Y")}>{self.last_date.strftime("%d/%m/%Y")} '
+
+    # comparer used for sorting in a list of topics
+    def __lt__(self, other):
+        return (self.name[:1].replace('#', '') + self.name[1:]).lower() < (other.name[:1].replace('#', '') + other.name[1:]).lower()

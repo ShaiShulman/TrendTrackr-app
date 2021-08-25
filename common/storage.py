@@ -3,9 +3,9 @@
 Provides interface with MongoDB for storing and retreiving master list of topics and daily ropics
 """
 import uuid
-from datetime import datetime
+import datetime
 from pymongo import MongoClient
-from common.data_structs import Topic, DailyTopics, DailyVolume, TopicSummary
+from common.data_structs import Topic, DailyTopics, DailyVolume, TopicSummary, TopicStat
 from common.keys import Keys
 
 
@@ -20,12 +20,23 @@ def _get_db(conn_str):
     return db
 
 
-_QUERY_ADD_TOPIC_RANK = [{'$unwind': '$topics'}, {'$sort': {'topics.volume': -1}},
-                         {'$group': {'_id': '$date', 'items': {'$push': '$$ROOT.topics'}, 'totalVolume': {'$sum': '$topics.volume'}}},
-                         {'$unwind': {'path': '$items', 'includeArrayIndex': 'items.rank'}},
-                         {'$set': {'items.volumePct': {'$divide': ['$items.volume', '$totalVolume']}}},
-                         {'$group': {'_id': '$_id', 'topics': {'$push': '$$ROOT.items'}}},
-                         {'$project': {'date': '$_id', '_id': 0, 'topics': 1}}]
+# MongoDB aggregate query for producing date-topic data without duplicate dates
+_AGGREGATE_UNIQUE_DATES = [
+    {'$project': {'date': {'$dateFromParts': {'year': {'$year': '$date'}, 'month': {'$month': '$date'},
+                                              'day': {'$dayOfMonth': '$date'}}}, 'topics': 1}},
+    {'$group': {'_id': '$date', 'topics': {'$first': '$topics'}}},
+    {'$sort': {'date': -1}},
+    {'$project': {'date': '$_id', '_id': 0, 'topics': 1}}]
+
+# MongoDB aggregate query for adding rank (index id) into topics per date
+_AGGREGATE_ADD_TOPIC_RANK = [{'$unwind': '$topics'}, {'$sort': {'topics.volume': -1}},
+                             {'$group': {'_id': '$date', 'items': {'$push': '$$ROOT.topics'},
+                                         'totalVolume': {'$sum': '$topics.volume'}}},
+                             {'$unwind': {'path': '$items', 'includeArrayIndex': 'items.rank'}},
+                             {'$set': {'items.volumePct': {'$divide': ['$items.volume', '$totalVolume']}}},
+                             {'$group': {'_id': '$_id', 'topics': {'$push': '$$ROOT.items'}}},
+                             {'$project': {'date': '$_id', '_id': 0, 'topics': 1}},
+                             {'$sort': {'date': 1}}]
 
 
 class Storage:
@@ -76,20 +87,27 @@ class Storage:
             topic in topics]}
         self._db.topics.insert_one(data)
 
-    def load_daily_topics(self, date=None, topic_id=None, topic_base_name=None, include_tweets=True):
+    def load_daily_topics(self, from_date=None, to_date=None, topic_id=None, topic_base_name=None, include_tweets=True):
         """
         load the trending topics for each date from MongoDB
-        @param date: optional. date to search for (time part will be ignored).
+        @param from_date: optional. from date to search for (time part will be ignored).
+        @param to_date: optional. to date to search for (time part will be ignored).
         @param topic_id: optional. id of topic to search.
         @param topic_base_name: optional. base name of topic to seach. will search by only one parameter.
-        @param include_tweets: shoudl sample sweets be included in the result.
+        @param include_tweets: should sample sweets be included in the result.
         @return: list of daily topic objects based on query. will return all dates if no query is provided.
         """
-        query = _QUERY_ADD_TOPIC_RANK
-        match = []
-        if isinstance(date, datetime):
-            match['date'] = {'$lt': datetime(date.year, date.month, date.day, 23, 59, 59),
-                             '$gte': datetime(date.year, date.month, date.day, 0, 0, 0)}
+        query = _AGGREGATE_UNIQUE_DATES + _AGGREGATE_ADD_TOPIC_RANK
+        match = {}
+        if (from_date and not isinstance(from_date, datetime.date)) or (to_date and not isinstance(to_date, datetime.date)):
+            raise ValueError('from_date and to_date must be empty or of date time')
+        if from_date or to_date:
+            match_date = {}
+            if from_date:
+                match_date['$gte'] = datetime.datetime(from_date.year, from_date.month, from_date.day, 23, 59, 59)
+            if to_date:
+                match_date['$lte'] = datetime.datetime(to_date.year, to_date.month, to_date.day, 0, 0, 0)
+            match['date'] = match_date
         if topic_id:
             match['topics.id'] = topic_id
         if topic_base_name:
@@ -97,18 +115,15 @@ class Storage:
             cursor = self._db.topics.find({'topics.id': topic_id})
         if len(match):
             query.append({'$match': match})
-        cursor = self._db.topics.aggregate(query)
-        data = []
-        for document in cursor:
-            daily = DailyTopics(time=str((document['date'].date())),
-                                topics=[Topic(name=topic['name'],
+        data = [DailyTopics(time=document['date'].date(),
+                            topics=[TopicStat(name=topic['name'],
                                               volume=topic['volume'],
                                               id=topic['id'],
                                               rank=topic['rank'] + 1,
                                               pct_volume=topic['volumePct'],
                                               tweets=topic.get('tweets', []) if include_tweets else [])
-                                        for topic in document['topics']])
-            data.append(daily)
+                                    for topic in document['topics']]) for document in
+                list(self._db.topics.aggregate(query))]
         return data
 
     def load_topic_history(self, topic_id=None, topic_base_name=None, include_name=False):
@@ -119,7 +134,8 @@ class Storage:
         @param include_name: True name should be included in output (only of topic_id is provided).
         @return: List of DailyVolume objects based on criteria. Will return all of no criteria is provided.
         """
-        query = [{'$unwind': '$topics'}]
+
+        query = _AGGREGATE_UNIQUE_DATES + _AGGREGATE_ADD_TOPIC_RANK + [{'$unwind': '$topics'}]
         if topic_id and not topic_base_name:
             query.append({'$match': {'topics.id': topic_id}})
         elif topic_base_name and not topic_id:
@@ -131,7 +147,7 @@ class Storage:
                 {'$lookup': {'from': 'master_list', 'localField': 'topics.id', 'foreignField': 'id',
                              'as': 'master'}},
                 {'$unwind': '$master'},
-                {'$project': {'id': '$topics.id', 'date': 1, 'volume': '$topics.volume',  'rank': '$topics.rank',
+                {'$project': {'id': '$topics.id', 'date': 1, 'volume': '$topics.volume', 'rank': '$topics.rank',
                               'volumePct': '$topics.volumePct', 'name': '$master.display_name'}}
             ])
         else:
@@ -142,7 +158,8 @@ class Storage:
             ])
         query.append({'$sort': {'date': 1}})
         raw_data = list(self._db.topics.aggregate(query))
-        data = [DailyVolume(daily['date'].date(), daily['volume'], daily['rank'], daily['volumePct']) for daily in raw_data]
+        data = [DailyVolume(daily['date'].date(), daily['volume'], daily['rank'], daily['volumePct']) for daily in
+                raw_data]
         if len(data) > 0:
             if include_name:
                 return data, data[0]['name']
@@ -158,7 +175,8 @@ class Storage:
         @param topic_name: optional. name of topic to search. Will search by either id or name.
         @return: List of TopicSummary objects.
         """
-        query = [{'$unwind': '$topics'}]
+
+        query = _AGGREGATE_UNIQUE_DATES + _AGGREGATE_ADD_TOPIC_RANK + [{'$unwind': '$topics'}]
         if topic_id:
             query.extend([{'$match': {'topics.id': topic_id}}])
 
@@ -170,16 +188,13 @@ class Storage:
         if topic_name:
             query.extend([{'$match': {'master.base_name': topic_name}}])
         query.extend([{'$project': {'id': 1, 'total_num': 1, 'first_date': 1, 'last_date': 1, 'total_volume': 1,
-                                    'total_days': 1, 'name': '$master.display_name'}},
-                      {'$sort': {'base_name': 1}}])
+                                    'total_days': 1, 'name': '$master.display_name'}}])
 
-        raw_data = list(self._db.topics.aggregate(query))
-        return [TopicSummary(id=document['_id'],
-                             name=document['name'],
-                             total_days=document['total_days'],
-                             total_volume=document['total_volume'],
-                             first_date=document['first_date'],
-                             last_date=document['last_date']) for document in raw_data]
-        return data
+        result = [TopicSummary(id=document['_id'],
+                               name=document['name'],
+                               total_days=document['total_days'],
+                               total_volume=document['total_volume'],
+                               first_date=document['first_date'],
+                               last_date=document['last_date']) for document in list(self._db.topics.aggregate(query))]
 
-
+        return sorted(result)
