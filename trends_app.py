@@ -1,12 +1,13 @@
 # TrendTracker.py
 """
-Look for Twitter trending topics in certain location (woeid - translated from place name) and save the topics and sample
+Obtain the Twitter trending topics for a specific location (based on Twitter woeid - translated from place name) and save the topics and sample
 tweets in a MongoDB database
 
 Module expects a keys.json file in the root folder with the twitter api keys and MongoDB connection string
 MongoDB should have a database names TrendTracker with two collections: masterlist and topics
 
-(c) Shai Shulman (shaishulman@gmail.com), 2021
+(c) under MIT license
+Created: Shai Shulman, 2021
 """
 
 import sys
@@ -30,7 +31,7 @@ def init_args():
     group.add_argument('-n', '--name', action='store',
                        help='extract topic history by base name')
     group.add_argument('-d', '--date', action='store', metavar='from_date',
-                       help=f'extract trending topic from date (from date in format {_DATE_FORMAT})')
+                       help='extract trending topic from date (from date in format dd/mm/yy)')
     group.add_argument('-a', '--all', action='store_true',
                        help='extract trending topic for all days collected')
     group.add_argument('-stt', '--stats_topic', action='store', metavar='topic',
